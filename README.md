@@ -81,7 +81,7 @@ Install directly from the GitHub repository:
 
 ```bash
 # Using uv
-uv pip install git+https://github.com/ryul99/PromptLens.git
+uv tool install git+https://github.com/ryul99/PromptLens.git
 
 # Using pip
 pip install git+https://github.com/ryul99/PromptLens.git
