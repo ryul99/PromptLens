@@ -92,6 +92,23 @@ def cli(
         ),
     ] = False,
 ) -> None:
+    """
+    PromptLens: OpenAI-compatible HTTP proxy for logging LLM interactions.
+
+    Captures user inputs and model responses (including tool use) as JSONL logs.
+    Supports streaming responses, multi-turn conversations, and function calling.
+
+    Examples:
+
+        # Run with upstream endpoint
+        plens --llm-endpoint http://127.0.0.1:4000 --port 8080
+
+        # Use config file
+        plens --config ./promptlens.toml
+
+        # Custom log directory
+        plens --llm-endpoint http://localhost:4000 --log-dir ./logs
+    """
     config_path = config or _default_config_path()
     if config_path is None and llm_endpoint is None:
         raise typer.BadParameter(
