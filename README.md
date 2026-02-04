@@ -51,6 +51,59 @@ Tool calls are logged in the `tool_calls` field:
 }
 ```
 
+## Installation
+
+### From Local Source
+
+Install the package in editable mode (for development):
+
+```bash
+# Using uv (recommended)
+uv pip install -e .
+
+# Using pip
+pip install -e .
+```
+
+Install normally:
+
+```bash
+# Using uv
+uv pip install .
+
+# Using pip
+pip install .
+```
+
+### From GitHub
+
+Install directly from the GitHub repository:
+
+```bash
+# Using uv
+uv pip install git+https://github.com/ryul99/PromptLens.git
+
+# Using pip
+pip install git+https://github.com/ryul99/PromptLens.git
+
+# Install from a specific branch
+pip install git+https://github.com/ryul99/PromptLens.git@main
+```
+
+After installation, the `plens` command is available globally:
+
+```bash
+plens --port 8080
+```
+
+### Development Mode
+
+To install with test dependencies:
+
+```bash
+uv sync --group dev
+```
+
 ## Quickstart
 
 Requirements:
@@ -58,7 +111,7 @@ Requirements:
 - Python 3.12+
 - `uv` (recommended)
 
-Install dependencies:
+For local development without installing:
 
 ```bash
 uv sync
