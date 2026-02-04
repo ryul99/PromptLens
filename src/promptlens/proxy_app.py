@@ -11,6 +11,26 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from promptlens.config import AppConfig
 from promptlens.logging_jsonl import JsonlLogger, safe_json_loads, truncate_bytes
 
+
+def _get_content_type(request_path: str, request_json: Any | None) -> str:
+    if not isinstance(request_json, dict):
+        return "unknown"
+
+    lowered = request_path.lower()
+    if "/chat/completions" in lowered:
+        return "chat"
+    if "/completions" in lowered:
+        return "completion"
+    if "/embeddings" in lowered:
+        return "embedding"
+    if "/images/generations" in lowered or "/images" in lowered:
+        return "image"
+    if "/responses" in lowered:
+        return "response"
+
+    return "unknown"
+
+
 HOP_BY_HOP_HEADERS = {
     "connection",
     "keep-alive",
@@ -63,6 +83,162 @@ def _should_stream(request_json: Any | None) -> bool:
     if not isinstance(request_json, dict):
         return False
     return bool(request_json.get("stream") is True)
+
+
+def _extract_user_input(
+    request_path: str, request_json: Any | None
+) -> dict[str, Any] | None:
+    if not isinstance(request_json, dict):
+        return None
+
+    content_type = _get_content_type(request_path, request_json)
+    content = _extract_prompt(request_path, request_json)
+
+    return {
+        "role": "user",
+        "type": content_type,
+        "content": content,
+    }
+
+
+def _extract_model_response(
+    response_json: Any | None, request_path: str
+) -> dict[str, Any] | None:
+    if not isinstance(response_json, dict):
+        return None
+
+    content_type = _get_content_type(request_path, response_json)
+    content = None
+    tool_calls = None
+    refusal = None
+
+    lowered = request_path.lower()
+
+    if "/chat/completions" in lowered:
+        choices = response_json.get("choices", [])
+        if choices and isinstance(choices, list):
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                message = first_choice.get("message")
+                if isinstance(message, dict):
+                    content = message.get("content")
+                    tool_calls = message.get("tool_calls")
+                    refusal = message.get("refusal")
+    elif "/completions" in lowered:
+        choices = response_json.get("choices", [])
+        if choices and isinstance(choices, list):
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                content = first_choice.get("text")
+    elif "/embeddings" in lowered:
+        data = response_json.get("data", [])
+        if data and isinstance(data, list):
+            content = f"embedding with {len(data[0].get('embedding', []))} dimensions"
+    elif "/images" in lowered:
+        data = response_json.get("data", [])
+        if data and isinstance(data, list):
+            first_item = data[0]
+            if isinstance(first_item, dict):
+                content = {
+                    "url": first_item.get("url"),
+                    "revised_prompt": first_item.get("revised_prompt"),
+                }
+    else:
+        for key in ("content", "text", "output", "result"):
+            if key in response_json:
+                content = response_json.get(key)
+                break
+
+    result: dict[str, Any] = {
+        "role": "assistant",
+        "type": content_type,
+        "content": content,
+    }
+
+    if tool_calls:
+        result["tool_calls"] = tool_calls
+    if refusal:
+        result["refusal"] = refusal
+
+    return result
+
+
+def _parse_streaming_chat_completion(data: bytes) -> dict[str, Any] | None:
+    content_parts: list[str] = []
+    tool_calls_parts: dict[str, dict[str, Any]] = {}
+
+    try:
+        text = data.decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line or not line.startswith("data: "):
+            continue
+
+        data_str = line[6:].strip()
+        if data_str == "[DONE]":
+            continue
+
+        try:
+            chunk = json.loads(data_str)
+        except Exception:
+            continue
+
+        if not isinstance(chunk, dict):
+            continue
+
+        choices = chunk.get("choices", [])
+        if choices and isinstance(choices, list):
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                delta = first_choice.get("delta")
+                if isinstance(delta, dict):
+                    if "content" in delta and delta["content"]:
+                        content_parts.append(delta["content"])
+
+                    if "tool_calls" in delta:
+                        tool_calls_delta = delta["tool_calls"]
+                        if isinstance(tool_calls_delta, list):
+                            for tc in tool_calls_delta:
+                                if isinstance(tc, dict):
+                                    index = tc.get("index")
+                                    if index is not None:
+                                        idx_str = str(index)
+                                        if idx_str not in tool_calls_parts:
+                                            tool_calls_parts[idx_str] = {
+                                                "index": index,
+                                                "function": {},
+                                            }
+                                        tc_part = tool_calls_parts[idx_str]
+
+                                        if "id" in tc and tc["id"]:
+                                            tc_part["id"] = tc["id"]
+                                        if "type" in tc:
+                                            tc_part["type"] = tc["type"]
+
+                                        function = tc.get("function")
+                                        if isinstance(function, dict):
+                                            if "name" in function:
+                                                tc_part["function"]["name"] = (
+                                                    function.get("name")
+                                                )
+                                            if "arguments" in function:
+                                                func_args = tc_part["function"].get(
+                                                    "arguments", ""
+                                                )
+                                                tc_part["function"]["arguments"] = (
+                                                    func_args + function["arguments"]
+                                                )
+
+    result: dict[str, Any] = {}
+    if content_parts:
+        result["content"] = "".join(content_parts)
+    if tool_calls_parts:
+        result["tool_calls"] = list(tool_calls_parts.values())
+
+    return result if result else None
 
 
 def _extract_prompt(request_path: str, request_json: Any | None) -> Any | None:
@@ -150,14 +326,15 @@ def create_app(cfg: AppConfig, logger: JsonlLogger) -> FastAPI:
         req_json = safe_json_loads(body)
         streaming = _should_stream(req_json)
 
-        prompt = _extract_prompt(request_path, req_json)
-        prompt_for_log, prompt_truncated = _prompt_for_log(
-            prompt=prompt, max_bytes=cfg.logging.max_prompt_bytes
-        )
-        if prompt_for_log is not None:
-            await logger.write_event(
-                {"prompt": prompt_for_log, "truncated": prompt_truncated}
+        user_input = _extract_user_input(request_path, req_json)
+        if user_input:
+            input_for_log, input_truncated = _prompt_for_log(
+                prompt=user_input, max_bytes=cfg.logging.max_prompt_bytes
             )
+            if input_for_log is not None:
+                await logger.write_event(
+                    {"input": input_for_log, "truncated": input_truncated}
+                )
 
         req_headers = _filter_request_headers(request)
         query_params_for_upstream = list(request.query_params.multi_items())
@@ -167,6 +344,8 @@ def create_app(cfg: AppConfig, logger: JsonlLogger) -> FastAPI:
                 return await _proxy_streaming(
                     app=app,
                     cfg=cfg,
+                    logger=logger,
+                    request_path=request_path,
                     upstream_url=upstream_url,
                     method=method,
                     req_headers=req_headers,
@@ -181,6 +360,17 @@ def create_app(cfg: AppConfig, logger: JsonlLogger) -> FastAPI:
                 content=body if body else None,
                 headers=req_headers,
             )
+
+            resp_json = safe_json_loads(upstream_resp.content)
+            model_response = _extract_model_response(resp_json, request_path)
+            if model_response:
+                response_for_log, response_truncated = _prompt_for_log(
+                    prompt=model_response, max_bytes=cfg.logging.max_prompt_bytes
+                )
+                if response_for_log is not None:
+                    await logger.write_event(
+                        {"output": response_for_log, "truncated": response_truncated}
+                    )
 
             resp = Response(
                 content=upstream_resp.content,
@@ -207,6 +397,8 @@ async def _proxy_streaming(
     *,
     app: FastAPI,
     cfg: AppConfig,
+    logger: JsonlLogger,
+    request_path: str,
     upstream_url: str,
     method: str,
     req_headers: list[tuple[str, str]],
@@ -234,16 +426,50 @@ async def _proxy_streaming(
         )
 
     status_code = upstream_resp.status_code
+    accumulated_chunks: list[bytes] = []
 
     async def iterator() -> AsyncIterator[bytes]:
         try:
             async for chunk in upstream_resp.aiter_raw():
                 yield chunk
+                accumulated_chunks.append(chunk)
         finally:
             await upstream_cm.__aexit__(None, None, None)
 
+    async def logging_iterator() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in iterator():
+                yield chunk
+
+            full_bytes = b"".join(accumulated_chunks)
+            content_type = _get_content_type(request_path, None)
+
+            model_response = {
+                "role": "assistant",
+                "type": content_type,
+                "content": full_bytes.decode("utf-8", errors="ignore"),
+            }
+
+            if "/chat/completions" in request_path.lower():
+                parsed = _parse_streaming_chat_completion(full_bytes)
+                if parsed:
+                    if "content" in parsed:
+                        model_response["content"] = parsed["content"]
+                    if "tool_calls" in parsed:
+                        model_response["tool_calls"] = parsed["tool_calls"]
+
+            response_for_log, response_truncated = _prompt_for_log(
+                prompt=model_response, max_bytes=cfg.logging.max_prompt_bytes
+            )
+            if response_for_log is not None:
+                await logger.write_event(
+                    {"output": response_for_log, "truncated": response_truncated}
+                )
+        except Exception:
+            pass
+
     resp = StreamingResponse(
-        iterator(),
+        logging_iterator(),
         status_code=status_code,
         media_type=upstream_resp.headers.get("content-type"),
     )

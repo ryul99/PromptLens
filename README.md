@@ -1,5 +1,56 @@
 PromptLens (`plens`) is a local-first, OpenAI-compatible HTTP proxy that logs prompts as append-only JSONL.
 
+## Logging Format
+
+Each request generates one or two log entries:
+
+- **User input**: `{"role": "user", "type": "...", "content": ...}`
+- **Model response**: `{"role": "assistant", "type": "...", "content": ..., "tool_calls": [...]}` (if applicable)
+
+### Multi-Turn Conversations
+
+For chat completions, the **entire conversation history** is logged in the input field. This means previous exchanges are duplicated across requests.
+
+Example log entries for a 3-turn conversation:
+
+```json
+{"timestamp": "...", "input": {"role": "user", "type": "chat", "content": [{"role": "user", "content": "Hello"}]}, "truncated": false}
+{"timestamp": "...", "output": {"role": "assistant", "type": "chat", "content": "Hi there!"}, "truncated": false}
+
+{"timestamp": "...", "input": {"role": "user", "type": "chat", "content": [
+  {"role": "user", "content": "Hello"},
+  {"role": "assistant", "content": "Hi there!"},
+  {"role": "user", "content": "How are you?"}
+]}, "truncated": false}
+{"timestamp": "...", "output": {"role": "assistant", "type": "chat", "content": "I'm doing well!"}, "truncated": false}
+```
+
+### Tool Use
+
+Tool calls are logged in the `tool_calls` field:
+
+```json
+{
+  "timestamp": "...",
+  "output": {
+    "role": "assistant",
+    "type": "chat",
+    "content": "Let me check that for you.",
+    "tool_calls": [
+      {
+        "id": "call_abc123",
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "arguments": "{\"location\": \"Tokyo\"}"
+        }
+      }
+    ]
+  },
+  "truncated": false
+}
+```
+
 ## Quickstart
 
 Requirements:
@@ -65,3 +116,42 @@ Pretty-print the most recent event:
 ```bash
 tail -n 1 ./.promptlens/logs/promptlens.jsonl | jq .
 ```
+
+## Test Scenarios
+
+Individual test scripts are provided to verify logging behavior for different scenarios:
+
+```bash
+# Install the OpenAI package
+uv add openai
+
+# Run individual tests
+uv run python scripts/test_single_turn.py
+uv run python scripts/test_multi_turn.py
+uv run python scripts/test_tool_use.py
+uv run python scripts/test_streaming.py
+```
+
+### Configuration
+
+Configure the model and proxy URL via environment variables:
+
+```bash
+# Set model (default: gpt-4o-mini)
+export OPENAI_MODEL="llama-3.1-8b"
+
+# Set proxy URL (default: http://127.0.0.1:8080)
+export OPENAI_BASE_URL="http://127.0.0.1:8080"
+
+# Run test with custom configuration
+uv run python scripts/test_multi_turn.py
+```
+
+### Test Descriptions
+
+| Script | Description |
+|--------|-------------|
+| `test_single_turn.py` | Simple question and answer |
+| `test_multi_turn.py` | 3-turn conversation showing history accumulation |
+| `test_tool_use.py` | Function calling with tool_calls |
+| `test_streaming.py` | Real-time streaming responses |
