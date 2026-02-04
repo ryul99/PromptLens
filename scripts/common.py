@@ -31,5 +31,5 @@ def print_log_hint() -> None:
     """Print hint for viewing logs."""
     print(f"\n{'=' * 60}")
     print("View logs:")
-    print("  tail -n 20 ./.promptlens/logs/promptlens.jsonl | jq .")
+    print("  tail -n 20 ./logs/promptlens.jsonl | jq .")
     print(f"{'=' * 60}")

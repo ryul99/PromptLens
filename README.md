@@ -120,10 +120,10 @@ uv sync
 Run against an existing OpenAI-compatible upstream:
 
 ```bash
-uv run plens --llm-endpoint http://127.0.0.1:4000 --port 8080 --log-dir ./.promptlens/logs
+uv run plens --llm-endpoint http://127.0.0.1:4000 --port 8080 --log-dir ./logs
 ```
 
-Logs are written to `./.promptlens/logs/promptlens.jsonl` (one JSON object per line).
+Logs are written to `./logs/promptlens.jsonl` (one JSON object per line).
 
 Basic end-to-end test (requires your upstream to expose OpenAI-compatible routes):
 
@@ -153,7 +153,7 @@ log_level = "info"
 Then run:
 
 ```bash
-uv run plens --config ./promptlens.toml --port 8080 --log-dir ./.promptlens/logs
+uv run plens --config ./promptlens.toml --port 8080 --log-dir ./logs
 ```
 
 ## Inspect logs with Unix tools
@@ -161,13 +161,13 @@ uv run plens --config ./promptlens.toml --port 8080 --log-dir ./.promptlens/logs
 Follow logs:
 
 ```bash
-tail -f ./.promptlens/logs/promptlens.jsonl
+tail -f ./logs/promptlens.jsonl
 ```
 
 Pretty-print the most recent event:
 
 ```bash
-tail -n 1 ./.promptlens/logs/promptlens.jsonl | jq .
+tail -n 1 ./logs/promptlens.jsonl | jq .
 ```
 
 ## Test Scenarios

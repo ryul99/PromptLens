@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -19,7 +18,7 @@ def _default_config_path() -> Optional[Path]:
 
 
 def _default_log_dir() -> Path:
-    return Path(os.path.expanduser("~/.promptlens/logs"))
+    return Path("logs")
 
 
 def _version_callback(value: bool) -> None:
